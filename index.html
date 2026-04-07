@@ -718,12 +718,44 @@
         }
         
         @media (max-width: 600px) {
-            #gameTitle { font-size: 28px; }
-            .upgrade-card { width: 100px; padding: 10px; }
-            #ultimateButton { width: 60px; height: 60px; }
-            #monsterCardResult { padding: 20px 30px; }
+            #gameTitle { font-size: 24px; }
+            #gameSubtitle { font-size: 12px; }
+            .mode-button { padding: 10px 18px; font-size: 13px; min-width: 140px; }
+            .mode-description { font-size: 11px; }
+            .upgrade-card { width: 90px; padding: 8px; }
+            #ultimateButton { width: 55px; height: 55px; font-size: 14px; }
+            #monsterCardResult { padding: 15px 25px; }
+            #healthBarLabel, #scorePanel div { font-size: 12px; }
+            #scorePanel { padding: 8px 12px; min-width: 120px; }
+            #waveIndicator { font-size: 16px; top: 35px !important; padding: 6px 18px; }
+            #expBarContainer { top: 70px !important; }
+            #expBar { width: 200px !important; height: 16px !important; }
+            #levelText { font-size: 11px !important; }
+            #pauseButton, #muteButton, #leaderboardBtn { width: 40px; height: 40px; font-size: 16px; }
+            #nicknameModal div { padding: 20px 25px !important; }
+            #nicknameModal .pixel-button { padding: 10px 25px !important; font-size: 14px !important; }
+            .nickname-input { padding: 8px 15px !important; font-size: 14px !important; width: 180px !important; }
+            #modeSelectTitle { font-size: 14px !important; margin-bottom: 8px !important; }
+            .stat-card { padding: 8px 12px !important; }
+            .stat-icon { font-size: 18px !important; }
+            .stat-label { font-size: 10px !important; }
+            .stat-value { font-size: 14px !important; }
+            #ratingBadge { padding: 8px 20px !important; }
+            #ratingEmoji { font-size: 20px !important; }
+            #ratingText { font-size: 14px !important; }
+            #gameOverTitle { font-size: 22px !important; }
+            #finalStats { gap: 8px !important; }
+            .pixel-button { padding: 10px 25px !important; font-size: 14px !important; }
+            #leaderboardDropdown { width: 90% !important; max-width: 350px !important; }
+            .lb-tab { padding: 6px 12px !important; font-size: 11px !important; }
+            .lb-name { font-size: 11px !important; }
+            .lb-value { font-size: 12px !important; }
+            .lb-rank { font-size: 14px !important; width: 28px !important; }
+            .boss-health-text { font-size: 11px !important; }
+            .boss-health-fill { height: 18px !important; }
         }
     </style>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 </head>
 <body>
     <div id="gameContainer">
@@ -836,6 +868,11 @@
                         <button class="pixel-button" id="joinRoomButton" style="padding: 8px 20px; font-size: 14px;">加入游戏</button>
                         <div id="joinError" style="color: #e74c3c; font-size: 11px; margin-top: 4px; display: none;">邀请码无效或房间不存在</div>
                     </div>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <div style="color: #aaa; font-size: 11px; margin-bottom: 8px;">或</div>
+                    <button class="pixel-button" id="quickCoopButton" style="background: linear-gradient(180deg, #9b59b6, #8e44ad); padding: 10px 30px; font-size: 15px;">⚡ 快捷开始双人模式</button>
+                    <div style="color: #7f8c8d; font-size: 10px; margin-top: 6px;">无需邀请码，直接在同一设备体验</div>
                 </div>
                 <button class="pixel-button" id="backToModeButton" style="margin-top: 12px; padding: 8px 25px; font-size: 14px;">返回选择模式</button>
             </div>
@@ -951,6 +988,12 @@
     </div>
 
     <script>
+        let socket = null;
+        let isOnlineMode = false;
+        let isRoomHost = false;
+        let onlineRoomCode = null;
+        let networkPlayer = null;
+        
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
@@ -1821,11 +1864,6 @@
             });
         }
         
-        let currentRoomCode = null;
-        let isRoomHost = false;
-        let roomCheckInterval = null;
-        const STORAGE_KEY_ROOM_PREFIX = 'arcane_grove_coop_room_';
-        
         function generateRoomCode() {
             const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
             let code = '';
@@ -1835,83 +1873,112 @@
             return code;
         }
         
-        function createRoom() {
-            currentRoomCode = generateRoomCode();
-            isRoomHost = true;
-            document.getElementById('roomCode').textContent = currentRoomCode;
-            document.getElementById('roomCodeDisplay').style.display = 'block';
-            document.getElementById('createRoomButton').disabled = true;
-            document.getElementById('joinRoomInput').disabled = true;
-            document.getElementById('joinRoomButton').disabled = true;
+        function initSocket() {
+            if (socket) return;
             
-            const roomData = {
-                hostReady: true,
-                guestReady: false,
-                createdAt: Date.now()
-            };
-            localStorage.setItem(STORAGE_KEY_ROOM_PREFIX + currentRoomCode, JSON.stringify(roomData));
+            console.log('🔌 正在连接服务器...');
+            socket = io(window.location.origin);
             
-            roomCheckInterval = setInterval(checkRoomStatus, 1000);
-        }
-        
-        function joinRoom(code) {
-            code = code.toUpperCase();
-            const roomData = localStorage.getItem(STORAGE_KEY_ROOM_PREFIX + code);
-            if (!roomData) {
-                document.getElementById('joinError').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('joinError').style.display = 'none';
-                }, 2000);
-                return;
-            }
+            socket.on('connect', () => {
+                console.log('✅ 已连接到服务器！');
+            });
             
-            const room = JSON.parse(roomData);
-            if (room.guestReady) {
-                document.getElementById('joinError').textContent = '房间已满';
+            socket.on('disconnect', () => {
+                console.log('❌ 与服务器断开连接');
+            });
+            
+            socket.on('roomCreated', (code) => {
+                console.log('🏠 房间创建成功，邀请码:', code);
+                onlineRoomCode = code;
+                isRoomHost = true;
+                isOnlineMode = true;
+                document.getElementById('roomCode').textContent = code;
+                document.getElementById('roomCodeDisplay').style.display = 'block';
+                document.getElementById('createRoomButton').disabled = true;
+                document.getElementById('joinRoomInput').disabled = true;
+                document.getElementById('joinRoomButton').disabled = true;
+            });
+            
+            socket.on('roomJoined', (code) => {
+                console.log('✅ 成功加入房间:', code);
+                onlineRoomCode = code;
+                isRoomHost = false;
+                isOnlineMode = true;
+                socket.emit('playerReady', { roomCode: code, isHost: false });
+            });
+            
+            socket.on('playerJoined', (data) => {
+                console.log('🎮 其他玩家加入房间');
+                socket.emit('playerReady', { roomCode: onlineRoomCode, isHost: true });
+            });
+            
+            socket.on('joinError', (message) => {
+                console.log('❌ 加入房间失败:', message);
+                document.getElementById('joinError').textContent = message;
                 document.getElementById('joinError').style.display = 'block';
                 setTimeout(() => {
                     document.getElementById('joinError').style.display = 'none';
                     document.getElementById('joinError').textContent = '邀请码无效或房间不存在';
                 }, 2000);
-                return;
-            }
+            });
             
-            currentRoomCode = code;
-            isRoomHost = false;
-            room.guestReady = true;
-            localStorage.setItem(STORAGE_KEY_ROOM_PREFIX + code, JSON.stringify(room));
+            socket.on('startGame', () => {
+                console.log('🎮 游戏开始！');
+                startOnlineCoopGame();
+            });
             
-            startCoopGame();
+            socket.on('playerUpdate', (data) => {
+                networkPlayer = data.player;
+            });
+            
+            socket.on('enemiesUpdate', (enemies) => {
+                if (isRoomHost) return;
+                enemies.forEach((enemyData, index) => {
+                    if (enemies[index]) {
+                        Object.assign(enemies[index], enemyData);
+                    }
+                });
+            });
+            
+            socket.on('playerDisconnected', () => {
+                console.log('❌ 对方玩家断开连接');
+                alert('对方玩家已断开连接！');
+                cleanupOnlineRoom();
+            });
         }
         
-        function checkRoomStatus() {
-            if (!currentRoomCode || !isRoomHost) return;
-            const roomData = localStorage.getItem(STORAGE_KEY_ROOM_PREFIX + currentRoomCode);
-            if (roomData) {
-                const room = JSON.parse(roomData);
-                if (room.guestReady) {
-                    clearInterval(roomCheckInterval);
-                    startCoopGame();
-                }
-            }
+        function createRoom() {
+            initSocket();
+            socket.emit('createRoom');
         }
         
-        function startCoopGame() {
+        function joinRoom(code) {
+            initSocket();
+            socket.emit('joinRoom', code);
+        }
+        
+        function startOnlineCoopGame() {
             isCoopMode = true;
             document.getElementById('startScreen').style.display = 'none';
             audioManager.init();
             initGame();
         }
         
-        function cleanupRoom() {
-            if (roomCheckInterval) {
-                clearInterval(roomCheckInterval);
-                roomCheckInterval = null;
+        function cleanupOnlineRoom() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
             }
-            if (currentRoomCode) {
-                localStorage.removeItem(STORAGE_KEY_ROOM_PREFIX + currentRoomCode);
-                currentRoomCode = null;
-            }
+            isOnlineMode = false;
+            isRoomHost = false;
+            onlineRoomCode = null;
+            networkPlayer = null;
+            
+            document.getElementById('roomCodeDisplay').style.display = 'none';
+            document.getElementById('createRoomButton').disabled = false;
+            document.getElementById('joinRoomInput').disabled = false;
+            document.getElementById('joinRoomButton').disabled = false;
+            document.getElementById('joinRoomInput').value = '';
         }
         
         const BossUltimates = {
@@ -2445,6 +2512,33 @@
             }
             
             updatePlayer(dt);
+            
+            if (isOnlineMode && socket) {
+                const playerData = {
+                    x: player.x,
+                    y: player.y,
+                    hp: player.hp,
+                    maxHp: player.maxHp
+                };
+                socket.emit('updatePlayer', {
+                    roomCode: onlineRoomCode,
+                    player: playerData,
+                    isHost: isRoomHost
+                });
+                
+                if (isRoomHost) {
+                    socket.emit('updateEnemies', {
+                        roomCode: onlineRoomCode,
+                        enemies: enemies.map(e => ({
+                            x: e.x,
+                            y: e.y,
+                            hp: e.hp,
+                            maxHp: e.maxHp
+                        }))
+                    });
+                }
+            }
+            
             updateTowerSlots(dt);
             updateTowers(dt);
             updateSpawning(dt);
@@ -4194,7 +4288,7 @@
                 backgroundImage.onerror = function() {
                     isBgImageLoaded = false;
                 };
-                backgroundImage.src = 'background.png';
+                backgroundImage.src = 'start.png';
             }
             
             if (isBgImageLoaded && backgroundImage) {
@@ -4521,19 +4615,47 @@
         }
         
         function renderPlayer2() {
-            ctx.save();
-            if (player2.invincibleTime > 0) {
-                if (Math.floor(player2.blinkTimer) % 2 === 0) ctx.globalAlpha = 0.5;
+            if (isOnlineMode && networkPlayer) {
+                ctx.save();
+                ctx.globalAlpha = 0.8;
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(networkPlayer.x, networkPlayer.y + 20, 15, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                renderQPrincess(ctx, networkPlayer.x, networkPlayer.y, 0.4, playerAnimationFrame);
+                
+                const hpPercent = networkPlayer.hp / networkPlayer.maxHp;
+                const barWidth = 40;
+                const barHeight = 6;
+                const barX = networkPlayer.x - barWidth / 2;
+                const barY = networkPlayer.y - 45;
+                
+                ctx.fillStyle = '#333';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+                
+                ctx.fillStyle = hpPercent > 0.5 ? '#2ecc71' : hpPercent > 0.25 ? '#f39c12' : '#e74c3c';
+                ctx.fillRect(barX, barY, barWidth * hpPercent, barHeight);
+                
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+                
+                ctx.restore();
+            } else if (player2) {
+                ctx.save();
+                if (player2.invincibleTime > 0) {
+                    if (Math.floor(player2.blinkTimer) % 2 === 0) ctx.globalAlpha = 0.5;
+                }
+                
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(player2.x, player2.y + 20, player2.width / 2, player2.height / 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                renderQPrincess(ctx, player2.x, player2.y, 0.4, playerAnimationFrame);
+                
+                ctx.restore();
             }
-            
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.beginPath();
-            ctx.ellipse(player2.x, player2.y + 20, player2.width / 2, player2.height / 4, 0, 0, Math.PI * 2);
-            ctx.fill();
-            
-            renderQPrincess(ctx, player2.x, player2.y, 0.4, playerAnimationFrame);
-            
-            ctx.restore();
         }
         
         function renderQPrincess(ctx, x, y, scale, frame) {
@@ -5141,7 +5263,7 @@
             }
         });
         document.getElementById('backToModeButton').addEventListener('click', () => {
-            cleanupRoom();
+            cleanupOnlineRoom();
             document.getElementById('coopMenu').style.display = 'none';
             document.getElementById('startButton').style.display = 'inline-block';
             document.getElementById('roomCodeDisplay').style.display = 'none';
@@ -5153,6 +5275,14 @@
             document.querySelector('.mode-button[data-mode="survival"]').classList.add('selected');
             gameMode = 'survival';
             isCoopMode = false;
+        });
+        
+        document.getElementById('quickCoopButton').addEventListener('click', () => {
+            console.log('⚡ 快捷开始双人模式！');
+            isCoopMode = true;
+            document.getElementById('startScreen').style.display = 'none';
+            audioManager.init();
+            initGame();
         });
         
         document.getElementById('joinRoomInput').addEventListener('keypress', (e) => {
