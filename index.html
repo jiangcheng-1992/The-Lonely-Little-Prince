@@ -700,6 +700,8 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            color: #fff;
+            font-weight: 500;
         }
         .lb-value {
             font-size: 15px;
@@ -903,9 +905,6 @@
                 <button class="pixel-button" id="restartButton">
                     <span>🔄</span> 再来一局
                 </button>
-                <button class="pixel-button" id="leaderboardButton">
-                    <span>🏆</span> 排行榜
-                </button>
                 <button class="pixel-button" id="backToMenuButton">
                     <span>🏠</span> 主菜单
                 </button>
@@ -1071,9 +1070,13 @@
             constructor() {
                 this.audioContext = null;
                 this.backgroundMusicElement = null;
-                this.sounds = {};
                 this.masterGain = null;
                 this.sfxGain = null;
+                this.bgGain = null;
+                this.backgroundMusicInterval = null;
+                this.backgroundMusicPlaying = false;
+                this.usingWebAudioMusic = false;
+                this.currentBeat = 0;
                 this.initialized = false;
             }
             
@@ -1083,10 +1086,13 @@
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     this.masterGain = this.audioContext.createGain();
                     this.sfxGain = this.audioContext.createGain();
+                    this.bgGain = this.audioContext.createGain();
                     this.masterGain.connect(this.audioContext.destination);
                     this.sfxGain.connect(this.masterGain);
+                    this.bgGain.connect(this.masterGain);
                     this.masterGain.gain.value = isMuted ? 0 : gameVolume;
                     this.sfxGain.gain.value = 0.8;
+                    this.bgGain.gain.value = 0.25;
                     this.initialized = true;
                 } catch (e) {
                     console.log('音频系统初始化失败:', e);
@@ -1117,51 +1123,178 @@
                 }
             }
             
-            playGhibliStyleMusic() {
-                this.playBackgroundMusic();
+            playNote(frequency, startTime, duration, volume = 0.3, type = 'sine') {
+                if (!this.audioContext) return;
+                
+                const osc = this.audioContext.createOscillator();
+                const gain = this.audioContext.createGain();
+                
+                osc.connect(gain);
+                gain.connect(this.bgGain);
+                
+                osc.type = type;
+                osc.frequency.value = frequency;
+                
+                const attack = 0.05;
+                const decay = 0.1;
+                const sustain = duration - attack - decay - 0.05;
+                const release = 0.05;
+                
+                gain.gain.setValueAtTime(0, startTime);
+                gain.gain.linearRampToValueAtTime(volume, startTime + attack);
+                gain.gain.linearRampToValueAtTime(volume * 0.7, startTime + attack + decay);
+                gain.gain.linearRampToValueAtTime(volume * 0.6, startTime + attack + decay + sustain);
+                gain.gain.linearRampToValueAtTime(0, startTime + duration);
+                
+                osc.start(startTime);
+                osc.stop(startTime + duration + 0.1);
+            }
+            
+            playWebAudioBackgroundMusic() {
+                if (this.backgroundMusicPlaying) return;
+                if (!this.audioContext) this.init();
+                
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                
+                console.log('🎵 开始播放 Web Audio API 背景音乐...');
+                this.backgroundMusicPlaying = true;
+                this.usingWebAudioMusic = true;
+                this.currentBeat = 0;
+                
+                const C3 = 130.81, E3 = 164.81, F3 = 174.61, G3 = 196.00, A3 = 220.00, B3 = 246.94;
+                const C4 = 261.63, D4 = 293.66, E4 = 329.63, F4 = 349.23, 
+                      G4 = 392.00, A4 = 440.00, B4 = 493.88;
+                const C5 = 523.25, D5 = 587.33, E5 = 659.25, F5 = 698.46, G5 = 783.99;
+                
+                const melody = [
+                    { note: E4, dur: 0.5 }, { note: G4, dur: 0.5 },
+                    { note: A4, dur: 1.0 },
+                    { note: G4, dur: 0.5 }, { note: E4, dur: 0.5 },
+                    { note: D4, dur: 1.0 },
+                    { note: D4, dur: 0.5 }, { note: F4, dur: 0.5 },
+                    { note: A4, dur: 1.0 },
+                    { note: F4, dur: 0.5 }, { note: D4, dur: 0.5 },
+                    { note: C4, dur: 1.0 },
+                    { note: C4, dur: 0.5 }, { note: E4, dur: 0.5 },
+                    { note: G4, dur: 1.0 },
+                    { note: E4, dur: 0.5 }, { note: C4, dur: 0.5 },
+                    { note: B3, dur: 1.0 },
+                    { note: A3, dur: 0.5 }, { note: C4, dur: 0.5 },
+                    { note: E4, dur: 1.0 },
+                    { note: D4, dur: 0.5 }, { note: B3, dur: 0.5 },
+                    { note: G3, dur: 1.0 },
+                ];
+                
+                const bass = [
+                    { note: C3, dur: 2.0 },
+                    { note: G3, dur: 2.0 },
+                    { note: A3, dur: 2.0 },
+                    { note: F3, dur: 2.0 },
+                    { note: C3, dur: 2.0 },
+                    { note: G3, dur: 2.0 },
+                    { note: C3, dur: 2.0 },
+                    { note: G3, dur: 2.0 },
+                ];
+                
+                let melodyIndex = 0;
+                let bassIndex = 0;
+                let bassTimer = 0;
+                
+                const playNext = () => {
+                    if (!this.backgroundMusicPlaying || !this.usingWebAudioMusic) return;
+                    
+                    const now = this.audioContext.currentTime;
+                    
+                    const melodyNote = melody[melodyIndex];
+                    this.playNote(melodyNote.note, now, melodyNote.dur * 0.45, 0.3, 'triangle');
+                    
+                    bassTimer += melodyNote.dur;
+                    if (bassTimer >= 2.0) {
+                        const bassNote = bass[bassIndex];
+                        this.playNote(bassNote.note, now, bassNote.dur * 0.9, 0.15, 'sine');
+                        bassIndex = (bassIndex + 1) % bass.length;
+                        bassTimer = 0;
+                    }
+                    
+                    melodyIndex = (melodyIndex + 1) % melody.length;
+                    
+                    this.backgroundMusicInterval = setTimeout(() => playNext(), melodyNote.dur * 450);
+                };
+                
+                playNext();
             }
             
             playBackgroundMusic() {
+                if (this.backgroundMusicPlaying) return;
+                if (!this.audioContext) this.init();
+                
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                
                 if (!this.backgroundMusicElement) {
-                    console.log('创建背景音乐对象...');
+                    console.log('🎵 尝试加载 music.mp3...');
                     this.backgroundMusicElement = new Audio('music.mp3');
                     this.backgroundMusicElement.loop = true;
                     this.backgroundMusicElement.volume = isMuted ? 0 : gameVolume * 0.6;
                     this.backgroundMusicElement.muted = isMuted;
                     
                     this.backgroundMusicElement.addEventListener('canplay', () => {
-                        console.log('背景音乐可以播放了');
+                        console.log('🎵 music.mp3 加载成功，开始播放...');
+                        this.usingWebAudioMusic = false;
+                        this.backgroundMusicPlaying = true;
+                        this.backgroundMusicElement.play().then(() => {
+                            console.log('✅ music.mp3 播放成功！');
+                        }).catch(e => {
+                            console.log('❌ music.mp3 播放失败，切换到 Web Audio API:', e);
+                            this.stopMusic();
+                            this.playWebAudioBackgroundMusic();
+                        });
                     });
                     
                     this.backgroundMusicElement.addEventListener('error', (e) => {
-                        console.log('背景音乐加载错误:', e);
+                        console.log('❌ music.mp3 加载失败，切换到 Web Audio API:', e);
                         console.log('错误详情:', this.backgroundMusicElement.error);
+                        this.stopMusic();
+                        this.playWebAudioBackgroundMusic();
                     });
-                }
-                
-                if (!this.backgroundMusicElement.paused) {
-                    console.log('背景音乐已在播放中');
+                } else if (!this.backgroundMusicElement.paused) {
+                    console.log('🎵 背景音乐已在播放中');
                     return;
                 }
                 
-                console.log('尝试播放背景音乐...');
-                
-                if (this.audioContext && this.audioContext.state === 'suspended') {
-                    this.audioContext.resume();
-                }
-                
+                console.log('🎵 尝试播放 music.mp3...');
                 this.backgroundMusicElement.play().then(() => {
-                    console.log('✅ 背景音乐播放成功！');
+                    console.log('✅ music.mp3 播放成功！');
+                    this.usingWebAudioMusic = false;
+                    this.backgroundMusicPlaying = true;
                 }).catch(e => {
-                    console.log('❌ 播放背景音乐失败:', e);
+                    console.log('❌ music.mp3 播放失败，切换到 Web Audio API:', e);
+                    this.stopMusic();
+                    this.playWebAudioBackgroundMusic();
                 });
             }
             
+            playGhibliStyleMusic() {
+                this.playBackgroundMusic();
+            }
+            
             stopMusic() {
+                console.log('🎵 停止背景音乐');
+                this.backgroundMusicPlaying = false;
+                this.usingWebAudioMusic = false;
+                
                 if (this.backgroundMusicElement) {
-                    console.log('停止背景音乐');
+                    console.log('停止 music.mp3');
                     this.backgroundMusicElement.pause();
                     this.backgroundMusicElement.currentTime = 0;
+                }
+                
+                if (this.backgroundMusicInterval) {
+                    clearTimeout(this.backgroundMusicInterval);
+                    this.backgroundMusicInterval = null;
                 }
             }
             
