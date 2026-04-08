@@ -1057,13 +1057,22 @@
             }
         }
         
-        function getLeaderboard(type) {
+        async function getLeaderboard(type) {
+            try {
+                const response = await fetch('https://the-lonely-little-prince.onrender.com/api/leaderboard/' + type);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data;
+                }
+            } catch (e) {
+                console.log('服务器连接失败，使用本地存储');
+            }
             const key = type === 'survival' ? LB_KEY_SURVIVAL : LB_KEY_CHALLENGE;
             const data = localStorage.getItem(key);
             return data ? JSON.parse(data) : [];
         }
         
-        function saveToLeaderboard(name, value, level) {
+        async function saveToLeaderboard(name, value, level) {
             console.log('保存排行榜:', { name, value, level, isNameConfirmed });
             
             if (!name || !isNameConfirmed) {
@@ -1072,9 +1081,17 @@
             }
             
             const type = gameMode === 'survival' ? 'survival' : 'challenge';
-            const key = type === 'survival' ? LB_KEY_SURVIVAL : LB_KEY_CHALLENGE;
+            try {
+                const response = await fetch('https://the-lonely-little-prince.onrender.com/api/leaderboard', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, value, type, level })
+                });
+                if (response.ok) console.log('服务器保存成功');
+            } catch (e) { console.log('服务器保存失败:', e); }
             
-            const data = getLeaderboard(type);
+            const key = type === 'survival' ? LB_KEY_SURVIVAL : LB_KEY_CHALLENGE;
+            const data = await getLeaderboard(type);
             const entry = {
                 name: name,
                 value: type === 'survival' ? Math.floor(value) : level,
@@ -1094,10 +1111,12 @@
             console.log('保存成功:', entry);
         }
         
-        function renderLeaderboard(type) {
+        let leaderboardRefreshInterval = null;
+        
+        async function renderLeaderboard(type) {
             console.log('渲染排行榜，类型:', type);
             const container = document.getElementById('leaderboardDropdownContent');
-            const data = getLeaderboard(type);
+            const data = await getLeaderboard(type);
             console.log('排行榜数据:', data);
             
             if (data.length === 0) {
@@ -1119,17 +1138,26 @@
             }).join('');
         }
         
-        function openLeaderboard() {
+        async function openLeaderboard() {
             console.log('打开排行榜');
             const dropdown = document.getElementById('leaderboardDropdown');
             dropdown.style.display = 'flex';
             dropdown.style.zIndex = '1000';
-            renderLeaderboard(currentLbType);
+            await renderLeaderboard(currentLbType);
+            console.log('启动排行榜定时刷新');
+            leaderboardRefreshInterval = setInterval(async function() {
+                console.log('定时刷新排行榜');
+                await renderLeaderboard(currentLbType);
+            }, 5000);
         }
         
         function closeLeaderboard() {
             const dropdown = document.getElementById('leaderboardDropdown');
             dropdown.style.display = 'none';
+            if (leaderboardRefreshInterval) {
+                clearInterval(leaderboardRefreshInterval);
+                leaderboardRefreshInterval = null;
+            }
         }
         
         class AudioManager {
@@ -1900,7 +1928,7 @@
             if (socket) return;
             
             console.log('🔌 正在连接服务器...');
-            socket = io(window.location.origin);
+            socket = io('https://the-lonely-little-prince.onrender.com');
             
             socket.on('connect', () => {
                 console.log('✅ 已连接到服务器！');
@@ -4204,7 +4232,7 @@
             }
         }
         
-        function gameOver() {
+        async function gameOver() {
             gameState = GameState.GAMEOVER;
             document.getElementById('finalScore').textContent = Math.floor(score);
             document.getElementById('finalTime').textContent = formatTime(gameTime);
@@ -4234,10 +4262,9 @@
             
             // 自动保存到排行榜
             const finalLevel = gameMode === 'challenge' ? currentLevel : player.level;
-            saveToLeaderboard(playerName, score, finalLevel);
+            await saveToLeaderboard(playerName, score, finalLevel);
             
-            // 刷新排行榜显示
-            renderLeaderboard(currentLbType);
+            await renderLeaderboard(currentLbType);
             
             // 停止背景音乐
             audioManager.stopMusic();

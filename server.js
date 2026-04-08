@@ -20,6 +20,10 @@ app.use(express.static(path.join(__dirname, '.')));
 
 const rooms = new Map();
 
+let leaderboardSurvival = [];
+let leaderboardChallenge = [];
+const MAX_LEADERBOARD_SIZE = 100;
+
 function generateRoomCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
@@ -28,6 +32,44 @@ function generateRoomCode() {
     }
     return code;
 }
+
+app.use(express.json());
+
+app.get('/api/leaderboard/survival', (req, res) => {
+    res.json(leaderboardSurvival);
+});
+
+app.get('/api/leaderboard/challenge', (req, res) => {
+    res.json(leaderboardChallenge);
+});
+
+app.post('/api/leaderboard', (req, res) => {
+    const { name, value, type, level } = req.body;
+    
+    if (!name || !value || !type) {
+        return res.status(400).json({ error: '缺少必要参数' });
+    }
+    
+    const entry = {
+        name: name,
+        value: type === 'survival' ? Math.floor(value) : level,
+        level: level || 1,
+        date: Date.now()
+    };
+    
+    if (type === 'survival') {
+        leaderboardSurvival.push(entry);
+        leaderboardSurvival.sort((a, b) => b.value - a.value);
+        leaderboardSurvival = leaderboardSurvival.slice(0, MAX_LEADERBOARD_SIZE);
+    } else {
+        leaderboardChallenge.push(entry);
+        leaderboardChallenge.sort((a, b) => b.value - a.value || b.level - a.level);
+        leaderboardChallenge = leaderboardChallenge.slice(0, MAX_LEADERBOARD_SIZE);
+    }
+    
+    console.log('📊 排行榜更新:', entry);
+    res.json({ success: true });
+});
 
 io.on('connection', (socket) => {
     console.log('🎮 玩家连接:', socket.id);
