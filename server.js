@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,6 +24,47 @@ const rooms = new Map();
 let leaderboardSurvival = [];
 let leaderboardChallenge = [];
 const MAX_LEADERBOARD_SIZE = 100;
+
+const STATS_FILE = path.join(__dirname, 'stats.json');
+
+function loadStats() {
+    try {
+        if (fs.existsSync(STATS_FILE)) {
+            const data = fs.readFileSync(STATS_FILE, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (e) {
+        console.log('📊 统计文件加载失败，使用默认值');
+    }
+    return {
+        daily: {},
+        totalVisitors: 0,
+        totalVisits: 0,
+        uniqueVisitors: new Set()
+    };
+}
+
+function saveStats(stats) {
+    try {
+        const dataToSave = {
+            ...stats,
+            uniqueVisitors: Array.from(stats.uniqueVisitors || [])
+        };
+        fs.writeFileSync(STATS_FILE, JSON.stringify(dataToSave, null, 2));
+    } catch (e) {
+        console.error('❌ 保存统计数据失败:', e);
+    }
+}
+
+let stats = loadStats();
+if (Array.isArray(stats.uniqueVisitors)) {
+    stats.uniqueVisitors = new Set(stats.uniqueVisitors);
+}
+
+function getTodayKey() {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
 
 function generateRoomCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -69,6 +111,64 @@ app.post('/api/leaderboard', (req, res) => {
     
     console.log('📊 排行榜更新:', entry);
     res.json({ success: true });
+});
+
+app.post('/api/stats/visit', (req, res) => {
+    const { visitorId } = req.body;
+    const today = getTodayKey();
+    
+    if (!stats.daily[today]) {
+        stats.daily[today] = { visitors: 0, visits: 0, uniqueVisitors: new Set() };
+    }
+    
+    const todayStats = stats.daily[today];
+    
+    if (visitorId && !todayStats.uniqueVisitors.has(visitorId)) {
+        todayStats.uniqueVisitors.add(visitorId);
+        todayStats.visitors++;
+    }
+    
+    todayStats.visits++;
+    stats.totalVisits++;
+    
+    if (visitorId && !stats.uniqueVisitors.has(visitorId)) {
+        stats.uniqueVisitors.add(visitorId);
+        stats.totalVisitors++;
+    }
+    
+    saveStats(stats);
+    
+    res.json({ success: true });
+});
+
+app.get('/api/stats', (req, res) => {
+    const today = getTodayKey();
+    const todayStats = stats.daily[today] || { visitors: 0, visits: 0 };
+    
+    const last7Days = [];
+    for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        const dayStats = stats.daily[key] || { visitors: 0, visits: 0 };
+        last7Days.push({
+            date: key,
+            visitors: dayStats.visitors || 0,
+            visits: dayStats.visits || 0
+        });
+    }
+    
+    res.json({
+        today: {
+            visitors: todayStats.visitors || 0,
+            visits: todayStats.visits || 0
+        },
+        total: {
+            visitors: stats.totalVisitors || 0,
+            visits: stats.totalVisits || 0
+        },
+        last7Days
+    });
 });
 
 io.on('connection', (socket) => {

@@ -760,6 +760,7 @@
             .boss-health-fill { height: 18px !important; }
         }
     </style>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6821198896914466" crossorigin="anonymous"></script>
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 </head>
 <body>
@@ -823,7 +824,7 @@
             <div id="joystickArea"><div id="joystickKnob"></div></div>
         </div>
         
-        <div id="startScreen">
+        <div id="startScreen" class="has-bg">
             <div id="gameTitle">👑 孤独的小王子 👑</div>
             <div id="gameSubtitle">The Lonely Little Prince</div>
             <div id="modeSelection">
@@ -995,20 +996,32 @@
     <script>
         // 预加载背景图
         (function preloadBackgroundImage() {
-            const bgImg = new Image();
-            bgImg.decoding = 'async';
-            bgImg.onload = function() {
-                const startScreen = document.getElementById('startScreen');
-                if (startScreen) {
-                    requestAnimationFrame(function() {
-                        startScreen.classList.add('has-bg');
-                    });
-                }
-            };
-            bgImg.onerror = function() {
-                console.log('背景图加载失败，使用渐变背景');
-            };
-            bgImg.src = 'start.png';
+            const startScreen = document.getElementById('startScreen');
+            if (startScreen) {
+                const bgImg = new Image();
+                bgImg.onload = function() {
+                    startScreen.classList.add('has-bg');
+                };
+                bgImg.onerror = function() {
+                    console.log('背景图加载失败，使用渐变背景');
+                };
+                bgImg.src = 'start.png';
+            }
+        })();
+        
+        // 访问统计追踪
+        (function trackVisit() {
+            let visitorId = localStorage.getItem('visitorId');
+            if (!visitorId) {
+                visitorId = 'v_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('visitorId', visitorId);
+            }
+            
+            fetch('/api/stats/visit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visitorId })
+            }).catch(err => console.log('访问统计上报失败:', err));
         })();
         
         let socket = null;
@@ -1980,6 +1993,18 @@
             
             socket.on('playerUpdate', (data) => {
                 networkPlayer = data.player;
+                if (data.player.gold !== undefined) {
+                    player.gold = data.player.gold;
+                }
+                if (data.player.totalGoldEarned !== undefined) {
+                    player.totalGoldEarned = data.player.totalGoldEarned;
+                }
+                if (data.player.exp !== undefined) {
+                    player.exp = data.player.exp;
+                }
+                if (data.player.level !== undefined) {
+                    player.level = data.player.level;
+                }
             });
             
             socket.on('enemiesUpdate', (enemies) => {
@@ -1995,6 +2020,30 @@
                 console.log('❌ 对方玩家断开连接');
                 alert('对方玩家已断开连接！');
                 cleanupOnlineRoom();
+            });
+            
+            socket.on('shoot', (data) => {
+                if (isRoomHost) return;
+                const { x, y, angle, weapon, damage, isCrit } = data;
+                createProjectile(x, y, angle, weapon, damage, isCrit);
+            });
+            
+            socket.on('damageEnemy', (data) => {
+                if (isRoomHost) return;
+                const { enemyIndex, damage, weapon } = data;
+                if (enemies[enemyIndex]) {
+                    enemies[enemyIndex].hp -= damage;
+                    for (let i = 0; i < 10; i++) {
+                        const particleAngle = Math.random() * Math.PI * 2;
+                        particles.push({
+                            x: enemies[enemyIndex].x, y: enemies[enemyIndex].y,
+                            vx: Math.cos(particleAngle) * 150,
+                            vy: Math.sin(particleAngle) * 150,
+                            life: 0.4, maxLife: 0.4,
+                            color: weapon ? weapon.projectileColor : '#ff6b6b', size: 5
+                        });
+                    }
+                }
             });
         }
         
@@ -2122,7 +2171,7 @@
             
             const config = {};
             for (let level = 1; level <= 100; level++) {
-                const waveCount = 3 + Math.floor(level / 10);
+                const waveCount = 1 + Math.floor(level / 15);
                 const bossIndex = (level - 1) % bossNames.length;
                 config[level] = {
                     boss: 'BOSS_' + level,
@@ -2569,7 +2618,11 @@
                     x: player.x,
                     y: player.y,
                     hp: player.hp,
-                    maxHp: player.maxHp
+                    maxHp: player.maxHp,
+                    gold: player.gold,
+                    totalGoldEarned: player.totalGoldEarned,
+                    exp: player.exp,
+                    level: player.level
                 };
                 socket.emit('updatePlayer', {
                     roomCode: onlineRoomCode,
@@ -2616,7 +2669,7 @@
             
             if (!bossSpawned) {
                 waveTimer += dt;
-                if (waveTimer >= 30) { 
+                if (waveTimer >= 15) { 
                     waveTimer = 0; 
                     currentWave++; 
                 }
@@ -2630,7 +2683,7 @@
                 levelTransitionTimer += dt;
                 
                 if (levelTransitionTimer >= 2) {
-                    if (currentLevel < 3) {
+                    if (currentLevel < 20) {
                         currentLevel++;
                         bossSpawned = false;
                         bossDefeated = false;
@@ -3137,6 +3190,18 @@
                 color: weapon.projectileColor,
                 isCrit: isCrit
             });
+            
+            if (isOnlineMode && socket && isRoomHost) {
+                socket.emit('shoot', {
+                    roomCode: onlineRoomCode,
+                    x: x,
+                    y: y,
+                    angle: angle,
+                    weapon: weapon,
+                    damage: damage,
+                    isCrit: isCrit
+                });
+            }
             
             // 发射时的粒子效果
             for (let i = 0; i < 8; i++) {
@@ -3833,6 +3898,16 @@
                                 actualDamage *= enemy.shieldReduction;
                             }
                             enemy.hp -= actualDamage;
+                            
+                            if (isOnlineMode && socket && isRoomHost) {
+                                socket.emit('damageEnemy', {
+                                    roomCode: onlineRoomCode,
+                                    enemyIndex: j,
+                                    damage: actualDamage,
+                                    weapon: { projectileColor: proj.color }
+                                });
+                            }
+                            
                             hit = true;
                             if (proj.isCrit) {
                                 floatingTexts.push({
@@ -3848,6 +3923,16 @@
                                 actualDamage *= enemy.shieldReduction;
                             }
                             enemy.hp -= actualDamage;
+                            
+                            if (isOnlineMode && socket && isRoomHost) {
+                                socket.emit('damageEnemy', {
+                                    roomCode: onlineRoomCode,
+                                    enemyIndex: j,
+                                    damage: actualDamage,
+                                    weapon: { projectileColor: proj.color }
+                                });
+                            }
+                            
                             proj.hitEnemies.push(j);
                             proj.pierceLeft--;
                             if (proj.isCrit) {
@@ -3875,6 +3960,16 @@
                                 actualDamage *= enemy.shieldReduction;
                             }
                             enemy.hp -= actualDamage;
+                            
+                            if (isOnlineMode && socket && isRoomHost) {
+                                socket.emit('damageEnemy', {
+                                    roomCode: onlineRoomCode,
+                                    enemyIndex: j,
+                                    damage: actualDamage,
+                                    weapon: { projectileColor: proj.color }
+                                });
+                            }
+                            
                             hit = true;
                             if (proj.isCrit) {
                                 floatingTexts.push({
@@ -3922,7 +4017,7 @@
                     const dx = proj.x - player.x, dy = proj.y - player.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
                     if (dist < 25 && player.invincibleTime <= 0) {
-                        player.hp -= proj.damage;
+                        player.hp = Math.max(0, player.hp - proj.damage);
                         player.invincibleTime = 0.5;
                         for (let k = 0; k < 8; k++) {
                             particles.push({
@@ -3942,7 +4037,7 @@
                         if (dotProduct > 0 && player.invincibleTime <= 0) {
                             const perpDist = Math.abs(dx * proj.dirY - dy * proj.dirX);
                             if (perpDist < 30) {
-                                player.hp -= proj.damage * dt;
+                                player.hp = Math.max(0, player.hp - proj.damage * dt);
                                 for (let k = 0; k < 3; k++) {
                                     particles.push({
                                         x: player.x + (Math.random() - 0.5) * 20,
@@ -4076,7 +4171,7 @@
                             }
                         }
                         if (damage > 0) {
-                            player.hp -= damage;
+                            player.hp = Math.max(0, player.hp - damage);
                             audioManager.playHurt();
                         }
                         player.invincibleTime = 0.5;
@@ -4115,7 +4210,7 @@
                             }
                         }
                         if (damage > 0) {
-                            player2.hp -= damage;
+                            player2.hp = Math.max(0, player2.hp - damage);
                             audioManager.playHurt();
                         }
                         player2.invincibleTime = 0.5;
